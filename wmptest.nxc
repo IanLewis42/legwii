@@ -1,0 +1,226 @@
+#define PORT S2
+#define SHOW_CALIB_VALUES
+//#define LOGGING
+
+#define True 1
+#define False 0
+
+byte WMplusActivate[] = {0xA6, 0xFE, 0x04};
+byte WMplusWrite[] = {0xA4, 0x00};
+byte WMplusRead[] = {0xA4};
+
+byte nbytes;
+byte data[];
+
+unsigned long t1,t2,t3,t4,t5,t6,t7;
+
+int yaw, pitch, roll;      // variables holding sensor values
+int yaw0, pitch0, roll0;   // variables for offset values
+
+float yaw_gain, pitch_gain, roll_gain;
+
+
+/* Initialises the Wii Motion Plus.
+After this, the i2c address changes to 0xA4
+*/
+void initWMplus()
+{
+   LowspeedWrite(PORT, 0, WMplusActivate);
+   while(LowspeedStatus(PORT, nbytes)>0);
+}
+
+/* Calibrates the offset values by
+computing the average of ten readings
+*/
+int calibrateOffset()
+{
+   int i = 0;
+
+   ClearScreen();
+   
+   
+   
+   TextOut(5, LCD_LINE1, "Start Cal");
+
+   while (i < 10)     // read sensors 10 times
+   {
+      ClearScreen();
+      LowspeedWrite(PORT, 0, WMplusWrite);    //set address 00
+      while(LowspeedStatus(PORT, nbytes)>0);
+      
+      TextOut(5, LCD_LINE2, "Write");
+      NumOut(55, LCD_LINE2, i);
+
+      LowspeedWrite(PORT, 6, WMplusRead);       //ask for 6 bytes
+      while(LowspeedStatus(PORT, nbytes)>0);
+      
+      TextOut(5, LCD_LINE3, "Read");
+      NumOut(55, LCD_LINE3, nbytes);
+
+      if(nbytes == 6)
+      {
+         LowspeedRead(PORT, 6, data);  //read data from buffer
+         TextOut(5, LCD_LINE4, "Read Data");
+         yaw0 += (((data[3]>>2)<<8) | data[0]) / 10;
+         pitch0 += (((data[4]>>2)<<8) | data[1]) / 10;
+         roll0 += (((data[5]>>2)<<8) | data[2]) / 10;
+         i++;
+      }
+      else
+      {
+          return 1;   //FAIL
+      }
+
+      Wait(50);
+   }
+
+   #ifdef SHOW_CALIB_VALUES
+   {
+      NumOut(55, LCD_LINE3, yaw0);
+      NumOut(55, LCD_LINE4, pitch0);
+      NumOut(55, LCD_LINE5, roll0);
+      TextOut(5, LCD_LINE3, "yaw0: ");
+      TextOut(5, LCD_LINE4, "pitch0: ");
+      TextOut(5, LCD_LINE5, "roll0: ");
+
+      //Wait(3000);
+   }
+   #endif
+   
+   return 0;  //SUCCESS
+}
+
+/* Reads the sensor values.
+After this, the raw values are stored in the data array
+and the computed values can be read from yaw, pitch and roll variables
+*/
+void readWMplus()
+{
+   t1 = CurrentTick();
+   LowspeedWrite(PORT, 0, WMplusWrite);
+   t2 = CurrentTick();
+   while(LowspeedStatus(PORT, nbytes)>0);
+   t3 = CurrentTick();
+
+   LowspeedWrite(PORT, 6, WMplusRead);       //ask for 6 bytes
+   t4 = CurrentTick();
+   while(LowspeedStatus(PORT, nbytes)>0);
+   t5 = CurrentTick();
+
+   if(nbytes == 6){
+      LowspeedRead(PORT, 6, data);  //read data from buffer
+      t6 = CurrentTick();
+      bool yaw_slow = data[3] & 0x02;
+      if(yaw_slow) yaw_gain = 1.0;
+      else yaw_gain = 4.5;
+      
+      bool pitch_slow = data[3] & 0x01;
+      if(pitch_slow) pitch_gain = 1.0;
+      else pitch_gain = 4.5;
+      
+      bool roll_slow = data[4] & 0x02;
+      if(roll_slow) roll_gain = 1.0;
+      else roll_gain = 4.5;
+      
+      yaw = ((((data[3]>>2)<<8) | data[0])*yaw_gain) - yaw0;
+      pitch = ((((data[4]>>2)<<8) | data[1])*pitch_gain) - pitch0;
+      roll = ((((data[5]>>2)<<8) | data[2])*roll_gain) - roll0;
+   }
+   else {
+      ArrayInit(data,0,0);    //error
+   }
+   t7 = CurrentTick();
+}
+
+task main()
+{
+   ClearScreen();
+   //TextOut(5, LCD_LINE1, "Start");
+   SetSensorLowspeed(PORT);
+   //TextOut(5, LCD_LINE2, "SetSensor");
+   SetI2COptions(PORT, I2C_OPTION_FAST);
+   initWMplus();
+   //TextOut(5, LCD_LINE3, "Init");
+   Wait(300);     // Wait some time after init
+   //TextOut(5, LCD_LINE4, "Wait");
+   int ret = calibrateOffset();
+   //TextOut(5, LCD_LINE5, "Cal");
+
+   SetSoundVolume(0)
+   if (ret)
+   {
+      TextOut(5, LCD_LINE1, "WMP Not detected");
+			//PlayToneEx(TONE_G4,300,1,False); //play fail tone
+			Wait(200);
+			//PlayToneEx(TONE_C4,200,1,False);
+			Wait(150);
+			while(1);
+   }
+   else
+   {
+      TextOut(5, LCD_LINE1, "WMP Calibrated");
+      //PlayToneEx(TONE_C5,300,1,False);
+			Wait(300);
+			//PlayToneEx(TONE_G5,200,1,False);
+			Wait(200);
+   }
+   
+#ifdef LOGGING
+   byte fileHandle;
+   unsigned int result, i;
+   result = DeleteFile("WMPData.txt");
+   result = CreateFile("WMPData.txt", 3000, fileHandle);
+   fprintf(fileHandle,"Y\tP\tR\n",0);
+   
+   while (!ButtonPressed(BTNCENTER, FALSE)); //wait for the centre button to be pressed
+   while (ButtonPressed(BTNCENTER, FALSE)); //wait for the centre button to be released
+
+   for (i=0 ; i<100 ; i++)
+   {
+      ClearScreen();
+      readWMplus();
+      
+      fprintf(fileHandle,"%d\t",yaw);
+      fprintf(fileHandle,"%d\t",pitch);
+      fprintf(fileHandle,"%d\n",roll);
+   }
+   CloseFile(fileHandle);
+#else
+   while (true)
+   {
+      ClearScreen();
+      readWMplus();
+      
+      if (ArrayLen(data)==6) {
+         for(int i=0; i<ArrayLen(data); i++ ) {
+            TextOut(15*i, LCD_LINE1, FormatNum("%02X", data[i]));  //hex: enhanced firmware
+            //NumOut(15*i, LCD_LINE5, outbuf[i]);  //dez: lego firmware
+          }
+           /*
+          NumOut(55, LCD_LINE3, yaw);
+          NumOut(55, LCD_LINE4, pitch);
+          NumOut(55, LCD_LINE5, roll);
+          TextOut(5, LCD_LINE3, "yaw: ");
+          TextOut(5, LCD_LINE4, "pitch: ");
+          TextOut(5, LCD_LINE5, "roll: ");
+          */
+          TextOut(5, LCD_LINE2, "t2-t1: ");
+          NumOut(55, LCD_LINE2, t2-t1);
+          TextOut(5, LCD_LINE3, "t3-t2: ");
+          NumOut(55, LCD_LINE3, t3-t2);
+          TextOut(5, LCD_LINE4, "t4-t3: ");
+          NumOut(55, LCD_LINE4, t4-t3);
+          TextOut(5, LCD_LINE5, "t5-t4: ");
+          NumOut(55, LCD_LINE5, t5-t4);
+          TextOut(5, LCD_LINE6, "t6-t5: ");
+          NumOut(55, LCD_LINE6, t6-t5);
+          TextOut(5, LCD_LINE7, "t7-t6: ");
+          NumOut(55, LCD_LINE7, t7-t6);
+          TextOut(5, LCD_LINE8, "t7-t1: ");
+          NumOut(55, LCD_LINE8, t7-t1);
+      }
+      Wait(200);
+   }
+#endif
+
+}

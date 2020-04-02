@@ -1,0 +1,200 @@
+//LEGWii
+//A self balancing robot using Lego Mindstorms and a Wii Motion Plus sensor
+//IPL 2020 (whilst under coronavirus lockdown :-)
+
+#define WMP S2
+#define RIGHT OUT_A
+#define LEFT  OUT_C
+#define BOTH  OUT_AC
+
+#define SLOW (1.0/9)
+#define FAST (1.0/5)
+
+void initWMplus();
+int calibrateOffset();
+void Error();
+void Success();
+void readWMplus();
+
+
+byte WMplusActivate[] = {0xA6, 0xFE, 0x04};
+byte WMplusWrite[] = {0xA4, 0x00};
+byte WMplusRead[] = {0xA4};
+
+byte nbytes;
+byte data[];
+
+//int yaw, pitch, roll;      // variables holding sensor values
+//long int yaw0, pitch0, roll0;   // variables for offset values
+
+//float yaw_gain = SLOW, pitch_gain = SLOW, roll_gain = SLOW;
+
+long int roll_offset=0;
+int roll, first_roll;
+float roll_gain, scaled_roll;
+
+const float your_wheel_diameter = 42;
+
+#include "balance.h"
+
+void Error()
+{
+      TextOut(5, LCD_LINE1, "WMP Not detected");
+			//PlayToneEx(TONE_G4,300,1,false); //play fail tone
+			Wait(200);
+			//PlayToneEx(TONE_C4,200,1,false);
+			Wait(150);
+			while(1);
+}
+
+void Success()
+{
+    TextOut(5, LCD_LINE1, "WMP Calibrated");
+    //PlayToneEx(TONE_C5,300,1,false);
+		Wait(200);
+		//PlayToneEx(TONE_G5,200,1,false);
+		Wait(150);
+}
+
+/* Initialises the Wii Motion Plus.
+After this, the i2c address changes to 0xA4
+*/
+void initWMplus()
+{
+   LowspeedWrite(WMP, 0, WMplusActivate);
+   while(LowspeedStatus(WMP, nbytes)>0);
+}
+
+/* Calibrates the offset values by
+computing the average of ten readings
+*/
+int calibrateOffset()
+{
+   int i;
+   roll_offset=0;
+   for (i=0 ; i<110 ; i++)     // read sensors 101 times, discard first
+   {
+      LowspeedWrite(WMP, 0, WMplusWrite);    //set address 00
+      while(LowspeedStatus(WMP, nbytes)>0);
+
+      LowspeedWrite(WMP, 6, WMplusRead);       //ask for 6 bytes
+      while(LowspeedStatus(WMP, nbytes)>0);
+
+      if(nbytes == 6)
+      {
+         LowspeedRead(WMP, 6, data);  //read data from buffer
+         //yaw0 += (((data[3]>>2)<<8) | data[0]);
+         //pitch0 += (((data[4]>>2)<<8) | data[1]);
+         //roll0 += (((data[5]>>2)<<8) | data[2]);
+         if (i<10)                                           //log first for debug
+            first_roll = (((data[5]>>2)<<8) | data[2]);      //turns out it's a bit random, so discard
+         else
+             roll_offset += (((data[5]>>2)<<8) | data[2]);
+      }
+      else
+          return 1;   //FAIL
+
+      Wait(25);
+   }
+   //yaw0 /= 100;
+   //pitch0 /= 100;
+   //roll0 /= 100;
+   roll_offset /= 100;
+   return 0;  //SUCCESS
+}
+
+/* Reads the sensor values.
+After this, the raw values are stored in the data array
+and the computed values can be read from yaw, pitch and roll variables
+*/
+void readWMplus()
+{
+   LowspeedWrite(WMP, 0, WMplusWrite);
+   while(LowspeedStatus(WMP, nbytes)>0);
+
+   LowspeedWrite(WMP, 6, WMplusRead);       //ask for 6 bytes
+   while(LowspeedStatus(WMP, nbytes)>0);
+
+   if(nbytes == 6){
+      LowspeedRead(WMP, 6, data);  //read data from buffer
+      /*bool yaw_slow = data[3] & 0x02;
+      if(yaw_slow) yaw_gain = SLOW;
+      else yaw_gain = FAST;
+
+      bool pitch_slow = data[3] & 0x01;
+      if(pitch_slow) pitch_gain = SLOW;
+      else pitch_gain = FAST;
+      */
+      bool roll_slow = data[4] & 0x02;
+      if(roll_slow) roll_gain = SLOW;
+      else roll_gain = FAST;
+
+      //yaw   = ((((data[3]>>2)<<8) | data[0]) - yaw0)   * yaw_gain;
+      //pitch = ((((data[4]>>2)<<8) | data[1]) - pitch0) * pitch_gain;
+      roll  = ((((data[5]>>2)<<8) | data[2]) - roll_offset);
+      scaled_roll = roll  * roll_gain;
+   }
+   else {
+      //ArrayInit(data,0,0);    //error
+      Error();
+   }
+}
+   
+task main()
+{
+     StartTask(balancing);
+     while(starting_balancing_task){}
+     
+     while (true)
+     {}
+
+
+
+   float Kp = 0.05, Ki = 0.0, Kd = 0.0;
+   float introll, drdt, correction;
+   int intCorrection;
+   int oldroll;
+   
+   ClearScreen();
+
+
+   while (true)
+   {
+      ClearScreen();
+      oldroll = roll;
+      readWMplus();
+
+      drdt = roll-oldroll;                //difference
+      introll = introll*0.9 + roll*0.1;   //leaky integrator
+
+     correction = roll*Kp + introll*Ki + drdt*Kd;
+
+     if (correction > 100) correction = 100;
+     if (correction < -100) correction = -100;
+     
+     intCorrection = correction;         //I think this is how you typecast....
+     OnRev(BOTH, intCorrection);
+
+      if (ArrayLen(data)==6)
+      {
+         for(int i=0; i<ArrayLen(data); i++ )
+            TextOut(15*i, LCD_LINE1, FormatNum("%02X", data[i]));  //hex: enhanced firmware
+
+          TextOut(5, LCD_LINE3, "roll: ");
+          NumOut(55, LCD_LINE3, roll);
+          TextOut(5, LCD_LINE4, "drdt: ");
+          NumOut(55, LCD_LINE4, drdt);
+          TextOut(5, LCD_LINE5, "intr: ");
+          NumOut(55, LCD_LINE5, introll);
+          TextOut(5, LCD_LINE6, "corr: ");
+          NumOut(55, LCD_LINE6, correction);
+
+      }
+
+      Wait(10);
+      
+
+   }
+}
+
+
