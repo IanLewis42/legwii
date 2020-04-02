@@ -17,15 +17,15 @@ task balancing()
     // Customize PID constants. These variables are global, so you can optionally dynamically change them in your main task.
     gn_dth_dt = 0.23;
     gn_th = 25.00;
-    gn_y = 0;//272.8;
-    gn_dy_dt = 0;//24.6;
-    kp = 0.0336;
+    gn_y = 0.0;//272.8;
+    gn_dy_dt = 0.0;//24.6;
+    //kp = 0.0336;
     //ki = 0.2688;
-    kd = 0.000504;
+    //kd = 0.000504;
 
-    //kp = 0.5;//667;
-    ki = 0.30;
-    //kd = 0.0;//0.0005;
+    kp = 0.025;//667;
+    ki = 0.3;//0.30;
+    kd = 0.001;//0.0005;
 
 
     ResetBlockTachoCount(OUT_AC);
@@ -99,7 +99,7 @@ task balancing()
          
          
     		//COMPUTE GYRO ANGULAR VELOCITY AND ESTIMATE ANGLE					//gyro gives rate of change of angle
-      	dth_dt = u/2 - mean_reading;											//u/2 cos we read it twice and sum? *IPL
+      	dth_dt = u - mean_reading;											//u/2 cos we read it twice and sum? *IPL
       	mean_reading = mean_reading*0.99 + (0.01*(dth_dt+mean_reading));		//leaky int added term is just u/2.....
       	th = th + dth_dt*dt;													//integrate to get angle
 

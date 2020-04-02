@@ -7,7 +7,7 @@
 #define LEFT  OUT_C
 #define BOTH  OUT_AC
 
-#define SLOW (1.0/9)
+#define SLOW (1.0/10)
 #define FAST (1.0/5)
 
 void initWMplus();
